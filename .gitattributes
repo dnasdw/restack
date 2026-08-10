@@ -1,0 +1,15 @@
+# restack .gitattributes
+# Force LF line endings everywhere (no CRLF, no autocrlf override).
+# This file is mirrored to restack/.gitattributes; the two must stay
+# binary-identical. Windows users: do NOT set core.autocrlf=true to
+# override this - the scripts must remain LF for git-bash compatibility.
+
+* text=auto eol=lf
+
+# Shell scripts (the restack deliverable) must always be LF.
+*.sh text eol=lf
+
+# Documentation and plain-text config follow the same rule.
+*.md  text eol=lf
+*.txt text eol=lf
+
