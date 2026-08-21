@@ -18,7 +18,7 @@ set -uo pipefail
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd -P )"
 RESTACK_SRC="$( cd "$SCRIPT_DIR/../restack" && pwd -P )"
 
-for f in lib.sh 01-init.sh 02-backup.sh 03-sync.sh 04-pull.sh 05-upgrade.sh 06-stack.sh 07-push.sh 08-restore.sh 09-cleanup.sh; do
+for f in lib.sh 01-init.sh 02-backup.sh 03-sync.sh 04-pull.sh 05-upgrade.sh 06-stack.sh 07-push.sh 08-restore.sh 09-cleanup.sh 10-force-upgrade.sh; do
   if [ ! -f "$RESTACK_SRC/$f" ]; then
     printf 'FATAL: missing %s under %s\n' "$f" "$RESTACK_SRC" >&2
     exit 2
@@ -148,7 +148,7 @@ git_config_at() {
 install_scripts() {
   local dst="$1"
   mkdir -p "$dst"
-  cp "$RESTACK_SRC"/lib.sh "$RESTACK_SRC"/0[1-9]-*.sh "$dst/"
+  cp "$RESTACK_SRC"/lib.sh "$RESTACK_SRC"/0[1-9]-*.sh "$RESTACK_SRC"/10-*.sh "$dst/"
 }
 
 # write_config <scripts-dir> <integration-name> <dag-line>...
@@ -928,7 +928,7 @@ test_T13() {
   cd "$repo"
 
   local script
-  for script in 01-init.sh 02-backup.sh 03-sync.sh 04-pull.sh 05-upgrade.sh 06-stack.sh 07-push.sh 08-restore.sh 09-cleanup.sh; do
+  for script in 01-init.sh 02-backup.sh 03-sync.sh 04-pull.sh 05-upgrade.sh 06-stack.sh 07-push.sh 08-restore.sh 09-cleanup.sh 10-force-upgrade.sh; do
     run_in "$repo" "$script" -h
     assert_eq "T13: $script -h exit 0" 0 "$RUN_RC"
     assert_contains "T13: $script -h prints usage" "$RUN_OUT$RUN_ERR" "usage:"
@@ -1727,6 +1727,150 @@ test_T25() {
 }
 
 # ---------------------------------------------------------------------------
+# T26: 10-force-upgrade - force one idempotent branch through a fresh
+# bridge + cherry-pick cycle. Verifies: new bridge recorded as last-base;
+# content (tree) preserved; old tip still reachable (bridge third parent);
+# pre+post backups share ts; the user's goal works (rewrite above last-base
+# then 06-stack rebuilds); 08-restore rolls the branch + last-base back.
+# ---------------------------------------------------------------------------
+test_T26() {
+  section "T26: force-upgrade single branch"
+
+  local repo="$ROOT/T26"
+  build_v1_v2_repo "$repo"
+  install_scripts "$repo/scripts"
+  write_config "$repo/scripts" "integration" \
+    "feature/root @base" \
+    "feature/a feature/root"
+  cd "$repo"
+  local v1 v2
+  v1=$(cat "$repo/.v1"); v2=$(cat "$repo/.v2")
+
+  git checkout -q "$v1"
+  run_in "$repo" 01-init.sh feature/root "$v1"
+  add_feature_commit "$repo" feature/root root.txt ROOT "root feature"
+  git checkout -q "$v1"
+  run_in "$repo" 01-init.sh feature/a "$v1"
+  add_feature_commit "$repo" feature/a a.txt AAA "a feature"
+
+  # Normal upgrade -> both branches idempotent afterwards.
+  git checkout -q feature/root
+  run_in "$repo" 05-upgrade.sh "$v2"
+  assert_eq "T26: setup upgrade exit 0" 0 "$RUN_RC"
+
+  local pre_tip pre_tree pre_lb
+  pre_tip=$(git rev-parse feature/root)
+  pre_tree=$(git rev-parse 'feature/root^{tree}')
+  pre_lb=$(git rev-parse refs/restack/last-base/feature/root)
+
+  # Force feature/root: 05 would skip it (idempotent); 10 must redo it.
+  run_in "$repo" 10-force-upgrade.sh "$v2" feature/root
+  assert_eq "T26: force-upgrade exit 0" 0 "$RUN_RC"
+  assert_contains "T26: force plan header" "$RUN_OUT$RUN_ERR" "=== restack 10-force-upgrade ==="
+  assert_contains "T26: force result header" "$RUN_OUT$RUN_ERR" "=== result: 10-force-upgrade ==="
+
+  local new_tip new_lb
+  new_tip=$(git rev-parse feature/root)
+  new_lb=$(git rev-parse refs/restack/last-base/feature/root)
+
+  assert_ne "T26: branch tip changed" "$pre_tip" "$new_tip"
+  assert_ne "T26: last-base advanced to new bridge" "$pre_lb" "$new_lb"
+  assert_eq "T26: tree preserved (content identical)" \
+    "$pre_tree" "$(git rev-parse 'feature/root^{tree}')"
+  assert_ancestor "T26: new last-base is ancestor of new tip" "$new_lb" "$new_tip"
+  assert_ancestor "T26: old tip preserved (bridge third parent)" "$pre_tip" "$new_tip"
+  assert_ancestor "T26: v2 still ancestor" "$v2" "$new_tip"
+  assert_eq "T26: new bridge tree equals base tree" \
+    "$(git rev-parse "$v2^{tree}")" "$(git rev-parse "$new_lb^{tree}")"
+
+  # Pre + post backups exist, share the timestamp portion, branch sanitized.
+  local names pre_name post_name
+  names=$(list_backup_names "$repo")
+  assert_contains "T26: pre snapshot emitted" "$names" "_force-upgrade-0pre-"
+  assert_contains "T26: post snapshot emitted" "$names" "_force-upgrade-1post-"
+  pre_name=$(printf '%s\n' "$names" | grep '_force-upgrade-0pre-' | head -n1)
+  post_name=$(printf '%s\n' "$names" | grep '_force-upgrade-1post-' | head -n1)
+  assert_eq "T26: pre+post share ts" \
+    "${pre_name%%_force-upgrade-0pre-*}" "${post_name%%_force-upgrade-1post-*}"
+  assert_contains "T26: sanitized branch in backup name" "$pre_name" "feature-root"
+
+  # The user's goal: rewrite history above the new last-base, then rebuild.
+  git checkout -q feature/root
+  git commit --amend -q -m "root feature (rewritten)"
+  assert_eq "T26: last-base unchanged by history rewrite" \
+    "$new_lb" "$(git rev-parse refs/restack/last-base/feature/root)"
+
+  run_in "$repo" 06-stack.sh "$v2"
+  assert_eq "T26: re-stack after rewrite exit 0" 0 "$RUN_RC"
+  assert_eq "T26: integration includes rewritten commit" \
+    1 "$(count_log_matches "$repo" "$v2..refs/heads/integration" "rewritten")"
+
+  # Rollback: restoring the force run's 0pre snapshot returns feature/root
+  # and its last-base to the pre-force state. integration did not exist at
+  # 0pre time, so 1-arg restore leaves it silently out of the restore set
+  # (its tip must be unchanged) and still exits 0.
+  local int_tip
+  int_tip=$(git rev-parse refs/heads/integration)
+  run_in "$repo" 08-restore.sh "$pre_name"
+  assert_eq "T26: restore exit 0" 0 "$RUN_RC"
+  assert_eq "T26: integration left alone (absent from 0pre snapshot)" \
+    "$int_tip" "$(git rev-parse refs/heads/integration)"
+  assert_eq "T26: feature/root back to pre-force tip" \
+    "$pre_tip" "$(git rev-parse feature/root)"
+  assert_eq "T26: last-base back to pre-force bridge" \
+    "$pre_lb" "$(git rev-parse refs/restack/last-base/feature/root)"
+}
+
+# ---------------------------------------------------------------------------
+# T27: 10-force-upgrade preconditions and usage guards. A branch not yet on
+# its base is refused (with the 05-upgrade hint) BEFORE any ref is touched
+# or any backup taken; argument-count errors and non-DAG branches die.
+# ---------------------------------------------------------------------------
+test_T27() {
+  section "T27: force-upgrade preconditions"
+
+  local repo="$ROOT/T27"
+  build_v1_v2_repo "$repo"
+  install_scripts "$repo/scripts"
+  write_config "$repo/scripts" "integration" \
+    "feature/root @base"
+  cd "$repo"
+  local v1 v2
+  v1=$(cat "$repo/.v1"); v2=$(cat "$repo/.v2")
+
+  git checkout -q "$v1"
+  run_in "$repo" 01-init.sh feature/root "$v1"
+  add_feature_commit "$repo" feature/root root.txt ROOT "root feature"
+
+  local pre_tip pre_lb
+  pre_tip=$(git rev-parse feature/root)
+  pre_lb=$(git rev-parse refs/restack/last-base/feature/root)
+
+  # Not upgraded yet -> hard precondition refuses; no backup, no ref change.
+  run_in "$repo" 10-force-upgrade.sh "$v2" feature/root
+  assert_ne "T27: non-idempotent branch refused (rc!=0)" 0 "$RUN_RC"
+  assert_contains "T27: hint points to 05-upgrade.sh" "$RUN_OUT$RUN_ERR" "05-upgrade.sh"
+  assert_eq "T27: branch untouched" "$pre_tip" "$(git rev-parse feature/root)"
+  assert_eq "T27: last-base untouched" \
+    "$pre_lb" "$(git rev-parse refs/restack/last-base/feature/root)"
+  assert_eq "T27: no force-upgrade backup taken" "" \
+    "$(list_backup_names "$repo" | grep 'force-upgrade' || true)"
+
+  # Wrong arg count (0 and 3) -> usage die.
+  run_in "$repo" 10-force-upgrade.sh
+  assert_ne "T27: 0 args refused" 0 "$RUN_RC"
+  assert_contains "T27: 0 args prints usage" "$RUN_OUT$RUN_ERR" "usage:"
+  run_in "$repo" 10-force-upgrade.sh "$v2" feature/root extra
+  assert_ne "T27: 3 args refused" 0 "$RUN_RC"
+  assert_contains "T27: 3 args prints usage" "$RUN_OUT$RUN_ERR" "usage:"
+
+  # Branch not in DAG -> die.
+  run_in "$repo" 10-force-upgrade.sh "$v2" nosuchbranch
+  assert_ne "T27: non-DAG branch refused" 0 "$RUN_RC"
+  assert_contains "T27: non-DAG message" "$RUN_OUT$RUN_ERR" "not in DAG"
+}
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 main() {
@@ -1764,6 +1908,8 @@ main() {
   test_T23
   test_T24
   test_T25
+  test_T26
+  test_T27
 
   printf '\n%s=========================================%s\n' "$C_BOLD" "$C_RESET"
   if [ "$FAIL" -eq 0 ]; then
