@@ -315,8 +315,8 @@ restack_check_dag_branches_exist() {
 # ---------------------------------------------------------------------------
 # Backup name layout under refs/backups/pre-restack/<name>/:
 #   - Manual backup (02-backup.sh): <name> is a bare timestamp.
-#   - Auto backup (05-upgrade.sh / 06-stack.sh): <name> is
-#     <ts>_<op>-<phase>[-<params>], where op in {upgrade, stack},
+#   - Auto backup (05-upgrade.sh / 06-stack.sh / 10-force-upgrade.sh): <name> is
+#     <ts>_<op>-<phase>[-<params>], where op in {upgrade, stack, force-upgrade},
 #     phase in {0pre, 1post}, and <params> is the script's CLI args (kept
 #     verbatim as far as ref naming allows; unsafe chars are replaced
 #     one-for-one with '-' by restack_sanitize_ref_segment). The leading
