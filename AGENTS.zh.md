@@ -6,7 +6,7 @@
 
 | 路径 | 角色 | 可变? |
 |---|---|---|
-| `restack/` | 主交付物。9 个数字编号脚本(`01-init.sh`...`09-cleanup.sh`)、`lib.sh`、`restack.txt`,外加镜像的 README 和 `.gitattributes`。设计为整体复制到宿主项目中。 | 是 |
+| `restack/` | 主交付物。10 个数字编号脚本(`01-init.sh`...`10-force-upgrade.sh`)、`lib.sh`、`restack.txt`,外加镜像的 README 和 `.gitattributes`。设计为整体复制到宿主项目中。 | 是 |
 | `tests/run-tests.sh` | 唯一的集成测试入口。在 fresh temp repo 上调用 `../restack/*.sh`。 | 是 |
 | `README.md` / `README.zh.md` | 根目录文档(英文 / 中文)。 | 是,受下方镜像规则约束 |
 | `.gitattributes` | 行尾策略(全仓 LF)。 | 是,受下方镜像规则约束 |
@@ -92,9 +92,9 @@
 
 ## restack 脚本约定
 
-- **`-h` / `--help` 强制**在每个数字编号脚本(`01`...`09`)上提供。`lib.sh` 里的模式是 `restack_help_check "${1:-}" "$USAGE"`,紧跟在 `source lib.sh` 之后。用法文本放在每个脚本顶部的 `USAGE` 变量里。
+- **`-h` / `--help` 强制**在每个数字编号脚本(`01`...`10`)上提供。`lib.sh` 里的模式是 `restack_help_check "${1:-}" "$USAGE"`,紧跟在 `source lib.sh` 之后。用法文本放在每个脚本顶部的 `USAGE` 变量里。
 - **`lib.sh` 只定义函数。** source 时无副作用。helper 以 `restack_` 为前缀。
-- **破坏性操作前必须自动备份。** helper `restack_auto_backup` + `restack_register_rollback_trap`(都在 `lib.sh`)负责此事。已在 `05-upgrade.sh` 和 `06-stack.sh` 中接线;新的破坏性脚本必须遵循同一模式。
+- **破坏性操作前必须自动备份。** helper `restack_auto_backup` + `restack_register_rollback_trap`(都在 `lib.sh`)负责此事。已在 `05-upgrade.sh`、`06-stack.sh` 和 `10-force-upgrade.sh` 中接线;新的破坏性脚本必须遵循同一模式。
 - **不用 `git rebase`** 改写已发布的分支引用。bridge-commit 方案(见 README "How it works")替代 rebase。这是神圣不可侵犯的。
 - **不对 `refs/heads/*` 或 `refs/restack/*` 做 `--force` push**。按设计 ff-only。
 - **当冲突标记仍然存在时,不自动 `cherry-pick --continue` / `--abort` / `--skip` / `--quit`**。唯一例外是 rerere 自动续跑,且仅在 rerere 已经完全解决冲突签名后才触发(见 README "rerere exception")。

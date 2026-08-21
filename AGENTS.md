@@ -6,7 +6,7 @@ This file is the **project-level** guide for AI agents (and humans pairing with 
 
 | Path | Role | Mutable? |
 |---|---|---|
-| `restack/` | The deliverable. 9 numbered scripts (`01-init.sh`...`09-cleanup.sh`), `lib.sh`, `restack.txt`, plus mirrored READMEs and `.gitattributes`. Designed to be copied as a unit into host projects. | Yes |
+| `restack/` | The deliverable. 10 numbered scripts (`01-init.sh`...`10-force-upgrade.sh`), `lib.sh`, `restack.txt`, plus mirrored READMEs and `.gitattributes`. Designed to be copied as a unit into host projects. | Yes |
 | `tests/run-tests.sh` | The single integration test entry point. Calls `../restack/*.sh` on fresh temp repos. | Yes |
 | `README.md` / `README.zh.md` | Root documentation (English / Chinese). | Yes, under the mirror rules below |
 | `.gitattributes` | Line-ending policy (LF everywhere). | Yes, under the mirror rules below |
@@ -92,9 +92,9 @@ If you add or rewrite a section in one language, **synchronously update the othe
 
 ## restack script conventions
 
-- **`-h` / `--help` is mandatory** on every numbered script (`01`...`09`). The pattern in `lib.sh` is `restack_help_check "${1:-}" "$USAGE"` immediately after `source lib.sh`. Usage text lives in a `USAGE` variable at the top of each script.
+- **`-h` / `--help` is mandatory** on every numbered script (`01`...`10`). The pattern in `lib.sh` is `restack_help_check "${1:-}" "$USAGE"` immediately after `source lib.sh`. Usage text lives in a `USAGE` variable at the top of each script.
 - **`lib.sh` defines functions only.** No side effects on source. Helpers prefixed `restack_`.
-- **Destructive operations must auto-backup first.** The helpers `restack_auto_backup` + `restack_register_rollback_trap` (both in `lib.sh`) handle this. Already wired in `05-upgrade.sh` and `06-stack.sh`; new destructive scripts must follow the same pattern.
+- **Destructive operations must auto-backup first.** The helpers `restack_auto_backup` + `restack_register_rollback_trap` (both in `lib.sh`) handle this. Already wired in `05-upgrade.sh`, `06-stack.sh`, and `10-force-upgrade.sh`; new destructive scripts must follow the same pattern.
 - **No `git rebase`** to rewrite published branch refs. The bridge-commit approach (see README "How it works") replaces rebase. This is sacred.
 - **No `--force` push** on `refs/heads/*` or `refs/restack/*`. ff-only by design.
 - **No automatic `cherry-pick --continue` / `--abort` / `--skip` / `--quit`** when conflict markers still exist. The only exception is rerere auto-continue, which fires only after rerere has fully resolved the conflict signature (see README "rerere exception").
